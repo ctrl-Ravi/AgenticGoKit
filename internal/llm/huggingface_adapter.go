@@ -110,7 +110,7 @@ func NewHuggingFaceAdapter(
 		useCache:          options.UseCache,
 		stopSequences:     options.StopSequences,
 		repetitionPenalty: options.RepetitionPenalty,
-		httpClient:        &http.Client{Timeout: timeout},
+		httpClient:        NewOptimizedHTTPClient(timeout),
 	}, nil
 }
 

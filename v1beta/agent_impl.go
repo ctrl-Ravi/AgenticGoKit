@@ -360,12 +360,24 @@ func (a *realAgent) execute(ctx context.Context, input string, opts *RunOptions)
 	finalResponse := response.Content
 	if len(a.tools) > 0 {
 		policy := a.singleCallPolicy()
-		// Prevent infinite loops; if only one tool is enabled for this run,
-		// a single iteration is typically sufficient.
-		maxToolIterations := 5
-		if len(a.tools) == 1 {
-			maxToolIterations = 1
+		// Determine max iterations based on reasoning config
+		maxToolIterations := 1 // Default: fast path (no continuation)
+		reasoningEnabled := false
+
+		if a.config.Tools != nil && a.config.Tools.Reasoning != nil {
+			reasoningEnabled = a.config.Tools.Reasoning.Enabled
+			if reasoningEnabled && a.config.Tools.Reasoning.MaxIterations > 0 {
+				maxToolIterations = a.config.Tools.Reasoning.MaxIterations
+			} else if reasoningEnabled {
+				maxToolIterations = 5 // Default max iterations when reasoning enabled
+			}
 		}
+
+		Logger().Debug().
+			Bool("reasoning_enabled", reasoningEnabled).
+			Int("max_iterations", maxToolIterations).
+			Msg("Tool execution configuration")
+
 		var toolErr error
 		if len(response.ToolCalls) > 0 {
 			finalResponse, toolCalls, toolErr = a.executeNativeToolsAndContinue(ctx, response, prompt, maxToolIterations)
@@ -1265,7 +1277,18 @@ func (a *realAgent) executeToolsAndContinue(
 			}))
 		}
 
-		// Build a new prompt with tool results
+		iteration++
+
+		// Skip continuation if we've reached max iterations (fast path optimization)
+		if iteration >= maxIterations {
+			Logger().Debug().
+				Int("max_iterations", maxIterations).
+				Int("iteration", iteration).
+				Msg("Reached maximum tool execution iterations, skipping continuation")
+			break
+		}
+
+		// Build a new prompt with tool results (only if continuing)
 		continuationPrompt := llm.Prompt{
 			System: originalPrompt.System,
 			User: fmt.Sprintf(
@@ -1284,15 +1307,6 @@ func (a *realAgent) executeToolsAndContinue(
 		}
 
 		currentResponse = response.Content
-		iteration++
-
-		// Check if we've reached max iterations
-		if iteration >= maxIterations {
-			Logger().Warn().
-				Int("max_iterations", maxIterations).
-				Msg("Reached maximum tool execution iterations")
-			break
-		}
 	}
 
 	return currentResponse, allToolCalls, nil
@@ -1380,6 +1394,18 @@ func (a *realAgent) executeNativeToolsAndContinue(
 			}))
 		}
 
+		iteration++
+
+		// Skip continuation if we've reached max iterations (fast path optimization)
+		if iteration >= maxIterations {
+			Logger().Debug().
+				Int("max_iterations", maxIterations).
+				Int("iteration", iteration).
+				Msg("Reached maximum tool execution iterations, skipping continuation")
+			break
+		}
+
+		// Make continuation call only if we haven't reached max iterations
 		continuationPrompt := llm.Prompt{
 			System: originalPrompt.System,
 			User: fmt.Sprintf(
@@ -1398,12 +1424,6 @@ func (a *realAgent) executeNativeToolsAndContinue(
 
 		response = resp
 		currentResponse = resp.Content
-		iteration++
-
-		if iteration >= maxIterations {
-			Logger().Warn().Int("max_iterations", maxIterations).Msg("Reached maximum tool execution iterations")
-			break
-		}
 	}
 
 	return currentResponse, allToolCalls, nil

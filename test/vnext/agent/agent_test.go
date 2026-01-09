@@ -288,7 +288,7 @@ func TestRunOptions(t *testing.T) {
 			factory: func() *vnext.RunOptions {
 				memOpts := &vnext.MemoryOptions{
 					Enabled:       true,
-					Provider:      "memory",
+					Provider:      "chromem",
 					ContextAware:  true,
 					SessionScoped: true,
 				}
@@ -809,6 +809,3 @@ func TestTracingOptions(t *testing.T) {
 		t.Error("Performance tracing should be enabled")
 	}
 }
-
-
-

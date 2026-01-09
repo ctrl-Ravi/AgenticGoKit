@@ -78,7 +78,7 @@ func NewOpenAIAdapter(apiKey, model string, maxTokens int, temperature float32) 
 		maxTokens:   maxTokens,
 		temperature: temperature,
 		baseURL:     DefaultOpenAIBaseURL, // Default OpenAI URL
-		httpClient:  &http.Client{Timeout: 120 * time.Second},
+		httpClient:  NewOptimizedHTTPClient(120 * time.Second),
 	}, nil
 }
 
@@ -108,7 +108,7 @@ func NewOpenAIAdapterWithConfig(config OpenAIAdapterConfig) (*OpenAIAdapter, err
 		temperature:       config.Temperature,
 		baseURL:           strings.TrimSuffix(config.BaseURL, "/"),
 		extraHeaders:      config.ExtraHeaders,
-		httpClient:        &http.Client{Timeout: config.HTTPTimeout},
+		httpClient:        NewOptimizedHTTPClient(config.HTTPTimeout),
 		topP:              config.TopP,
 		topK:              config.TopK,
 		presencePenalty:   config.PresencePenalty,

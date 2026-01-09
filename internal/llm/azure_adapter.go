@@ -128,7 +128,7 @@ func NewAzureOpenAIAdapter(opts AzureOpenAIAdapterOptions) (*AzureOpenAIAdapter,
 
 	client := opts.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 60 * time.Second} // Default client with timeout
+		client = NewOptimizedHTTPClient(60 * time.Second)
 	}
 
 	return &AzureOpenAIAdapter{

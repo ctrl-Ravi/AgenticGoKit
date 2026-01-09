@@ -78,6 +78,16 @@ type ToolsConfig struct {
 	MCP              *MCPConfig            `toml:"mcp,omitempty"`
 	Cache            *CacheConfig          `toml:"cache,omitempty"`
 	CircuitBreaker   *CircuitBreakerConfig `toml:"circuit_breaker,omitempty"`
+	Reasoning        *ReasoningConfig      `toml:"reasoning,omitempty"` // Agent reasoning/continuation settings
+}
+
+// ReasoningConfig controls whether the agent uses continuation loops for reasoning
+// When disabled (default): Agent calls LLM once, executes tools, returns result (fast path, like Python LangChain)
+// When enabled: Agent calls LLM, executes tools, calls LLM again for reasoning/refinement (slower but supports complex reasoning)
+type ReasoningConfig struct {
+	Enabled           bool `toml:"enabled"`              // Enable/disable agent reasoning loop
+	MaxIterations     int  `toml:"max_iterations"`       // Maximum reasoning iterations (default: 5)
+	ContinueOnToolUse bool `toml:"continue_on_tool_use"` // Always continue even with single tool (default: false)
 }
 
 // MCPConfig contains MCP server configuration
@@ -593,7 +603,7 @@ func ValidateConfig(config *Config) error {
 
 // validateLLMProvider validates provider-specific LLM configuration
 func validateLLMProvider(llm LLMConfig) *ValidationError {
-	validProviders := []string{"openai", "ollama", "azure", "anthropic"}
+	validProviders := []string{"openai", "ollama", "azure", "anthropic", "mock"}
 	isValid := false
 	for _, provider := range validProviders {
 		if llm.Provider == provider {

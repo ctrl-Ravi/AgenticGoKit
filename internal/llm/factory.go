@@ -19,6 +19,8 @@ const (
 	ProviderTypeVLLM          ProviderType = "vllm"
 	ProviderTypeMLFlowGateway ProviderType = "mlflow"
 	ProviderTypeBentoML       ProviderType = "bentoml"
+	// Test-only/mock provider for unit tests
+	ProviderTypeMock ProviderType = "mock"
 )
 
 // ProviderConfig holds configuration for creating LLM providers
@@ -100,7 +102,7 @@ type ProviderFactory struct {
 // NewProviderFactory creates a new provider factory
 func NewProviderFactory() *ProviderFactory {
 	return &ProviderFactory{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: NewOptimizedHTTPClient(30 * time.Second),
 	}
 }
 
@@ -119,7 +121,7 @@ func (f *ProviderFactory) CreateProvider(config ProviderConfig) (ModelProvider, 
 		config.Temperature = 0.7
 	}
 	if config.HTTPTimeout > 0 && f.httpClient.Timeout != config.HTTPTimeout {
-		f.httpClient = &http.Client{Timeout: config.HTTPTimeout}
+		f.httpClient = NewOptimizedHTTPClient(config.HTTPTimeout)
 	}
 
 	switch config.Type {
@@ -139,6 +141,8 @@ func (f *ProviderFactory) CreateProvider(config ProviderConfig) (ModelProvider, 
 		return f.createMLFlowGatewayProvider(config)
 	case ProviderTypeBentoML:
 		return f.createBentoMLProvider(config)
+	case ProviderTypeMock:
+		return f.createMockProvider(config)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", config.Type)
 	}
@@ -375,4 +379,14 @@ var DefaultFactory = NewProviderFactory()
 // CreateProviderFromConfig is a convenience function that uses the default factory
 func CreateProviderFromConfig(config ProviderConfig) (ModelProvider, error) {
 	return DefaultFactory.CreateProvider(config)
+}
+
+// createMockProvider creates a simple mock provider for tests
+func (f *ProviderFactory) createMockProvider(config ProviderConfig) (ModelProvider, error) {
+	// Model name optional; defaults to "mock-model"
+	model := config.Model
+	if model == "" {
+		model = "mock-model"
+	}
+	return NewMockAdapter(model), nil
 }

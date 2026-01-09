@@ -52,7 +52,7 @@ func NewOpenRouterAdapter(apiKey, model, baseURL string, maxTokens int, temperat
 		baseURL:     strings.TrimSuffix(baseURL, "/"),
 		siteURL:     siteURL,
 		siteName:    siteName,
-		httpClient:  &http.Client{Timeout: 120 * time.Second},
+		httpClient:  NewOptimizedHTTPClient(120 * time.Second),
 	}, nil
 }
 

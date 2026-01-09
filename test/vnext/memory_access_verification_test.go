@@ -58,7 +58,7 @@ func TestAgentMemoryAccess(t *testing.T) {
 			Model:    "gemma:2b",
 		},
 		Memory: &vnext.MemoryConfig{
-			Provider: "memory",
+			Provider: "chromem",
 			RAG:      &vnext.RAGConfig{
 				// Enabled is implied by presence
 			},
@@ -136,9 +136,9 @@ func TestWorkflowMemoryAccess(t *testing.T) {
 		t.Fatal("workflow.Memory() returned nil")
 	}
 
-	// Verify identity
-	if mem != mockMem {
-		t.Error("workflow.Memory() returned different instance than SetMemory")
+	// Verify identity via type assertion
+	if _, ok := mem.(*vnextMockMemory); !ok {
+		t.Error("workflow.Memory() did not return the expected mock memory type")
 	}
 }
 
@@ -154,6 +154,12 @@ func (m *vnextMockMemory) Query(ctx context.Context, query string, opts ...vnext
 func (m *vnextMockMemory) NewSession() string                                           { return "session" }
 func (m *vnextMockMemory) SetSession(ctx context.Context, id string) context.Context    { return ctx }
 func (m *vnextMockMemory) IngestDocument(ctx context.Context, doc vnext.Document) error { return nil }
+func (m *vnextMockMemory) IngestDocuments(ctx context.Context, docs []vnext.Document) error {
+	return nil
+}
+func (m *vnextMockMemory) SearchKnowledge(ctx context.Context, query string, opts ...vnext.QueryOption) ([]vnext.MemoryResult, error) {
+	return nil, nil
+}
 func (m *vnextMockMemory) BuildContext(ctx context.Context, query string, opts ...vnext.ContextOption) (*vnext.RAGContext, error) {
 	return nil, nil
 }

@@ -29,6 +29,7 @@ type PublicPrompt struct {
 	System     string
 	User       string
 	Parameters PublicModelParameters
+	Tools      []ToolDefinition
 }
 
 type PublicUsageStats struct {
@@ -41,6 +42,7 @@ type PublicResponse struct {
 	Content      string
 	Usage        PublicUsageStats
 	FinishReason string
+	ToolCalls    []ToolCallResponse
 }
 
 type PublicToken struct {
@@ -65,6 +67,7 @@ func (w *ModelProviderWrapper) Call(ctx context.Context, prompt PublicPrompt) (P
 			Temperature: prompt.Parameters.Temperature,
 			MaxTokens:   prompt.Parameters.MaxTokens,
 		},
+		Tools: prompt.Tools,
 	}
 
 	resp, err := w.internal.Call(ctx, internalPrompt)
@@ -80,6 +83,7 @@ func (w *ModelProviderWrapper) Call(ctx context.Context, prompt PublicPrompt) (P
 			TotalTokens:      resp.Usage.TotalTokens,
 		},
 		FinishReason: resp.FinishReason,
+		ToolCalls:    resp.ToolCalls,
 	}, nil
 }
 
@@ -91,6 +95,7 @@ func (w *ModelProviderWrapper) Stream(ctx context.Context, prompt PublicPrompt) 
 			Temperature: prompt.Parameters.Temperature,
 			MaxTokens:   prompt.Parameters.MaxTokens,
 		},
+		Tools: prompt.Tools,
 	}
 
 	internalChan, err := w.internal.Stream(ctx, internalPrompt)

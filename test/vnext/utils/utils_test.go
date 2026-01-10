@@ -77,7 +77,28 @@ func (m *mockMemoryProvider) SearchKnowledge(ctx context.Context, query string, 
 	return nil, nil
 }
 func (m *mockMemoryProvider) SearchAll(ctx context.Context, query string, options ...core.SearchOption) (*core.HybridResult, error) {
-	return nil, nil
+	// Build a simple hybrid result using stored memories; no knowledge base
+	limit := len(m.memories)
+	// Apply limit option if provided
+	cfg := &core.SearchConfig{Limit: limit}
+	for _, opt := range options {
+		opt(cfg)
+	}
+	if cfg.Limit < limit {
+		limit = cfg.Limit
+	}
+
+	personal := m.memories
+	if limit < len(personal) {
+		personal = personal[:limit]
+	}
+
+	return &core.HybridResult{
+		PersonalMemory: personal,
+		Knowledge:      []core.KnowledgeResult{},
+		Query:          query,
+		TotalResults:   len(personal),
+	}, nil
 }
 func (m *mockMemoryProvider) BuildContext(ctx context.Context, query string, options ...core.ContextOption) (*core.RAGContext, error) {
 	return nil, nil
@@ -329,13 +350,13 @@ func TestEnrichWithMemory(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("nil memory provider", func(t *testing.T) {
-		result := vnext.EnrichWithMemory(ctx, nil, "test query", &vnext.MemoryConfig{})
+		result, _, _, _ := vnext.EnrichWithMemory(ctx, nil, "test query", &vnext.MemoryConfig{})
 		assert.Equal(t, "test query", result)
 	})
 
 	t.Run("nil config", func(t *testing.T) {
 		mock := &mockMemoryProvider{}
-		result := vnext.EnrichWithMemory(ctx, mock, "test query", nil)
+		result, _, _, _ := vnext.EnrichWithMemory(ctx, mock, "test query", nil)
 		assert.Equal(t, "test query", result)
 	})
 
@@ -345,7 +366,7 @@ func TestEnrichWithMemory(t *testing.T) {
 		}
 		config := &vnext.MemoryConfig{}
 
-		result := vnext.EnrichWithMemory(ctx, mock, "test query", config)
+		result, _, _, _ := vnext.EnrichWithMemory(ctx, mock, "test query", config)
 		assert.Equal(t, "test query", result)
 	})
 
@@ -364,7 +385,7 @@ func TestEnrichWithMemory(t *testing.T) {
 			},
 		}
 
-		result := vnext.EnrichWithMemory(ctx, mock, "test query", config)
+		result, _, _, _ := vnext.EnrichWithMemory(ctx, mock, "test query", config)
 
 		assert.Contains(t, result, "Relevant Context")
 		assert.Contains(t, result, "Previous fact 1")
@@ -379,7 +400,7 @@ func TestEnrichWithMemory(t *testing.T) {
 		}
 		config := &vnext.MemoryConfig{} // No RAG config
 
-		result := vnext.EnrichWithMemory(ctx, mock, "test query", config)
+		result, _, _, _ := vnext.EnrichWithMemory(ctx, mock, "test query", config)
 
 		assert.Contains(t, result, "Relevant previous information")
 		assert.Contains(t, result, "Previous fact 1")
@@ -480,7 +501,7 @@ func TestBuildChatHistoryContext(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("nil memory provider", func(t *testing.T) {
-		result := vnext.BuildChatHistoryContext(ctx, nil, 10)
+		result, _ := vnext.BuildChatHistoryContext(ctx, nil, 10)
 		assert.Empty(t, result)
 	})
 
@@ -489,7 +510,7 @@ func TestBuildChatHistoryContext(t *testing.T) {
 			messages: []core.Message{},
 		}
 
-		result := vnext.BuildChatHistoryContext(ctx, mock, 10)
+		result, _ := vnext.BuildChatHistoryContext(ctx, mock, 10)
 		assert.Empty(t, result)
 	})
 
@@ -502,7 +523,7 @@ func TestBuildChatHistoryContext(t *testing.T) {
 			},
 		}
 
-		result := vnext.BuildChatHistoryContext(ctx, mock, 10)
+		result, _ := vnext.BuildChatHistoryContext(ctx, mock, 10)
 
 		assert.Contains(t, result, "# Previous Conversation")
 		assert.Contains(t, result, "**User**: Hello")
@@ -519,7 +540,7 @@ func TestBuildChatHistoryContext(t *testing.T) {
 			},
 		}
 
-		result := vnext.BuildChatHistoryContext(ctx, mock, 2)
+		result, _ := vnext.BuildChatHistoryContext(ctx, mock, 2)
 
 		// Should only include first 2 messages
 		assert.Contains(t, result, "Message 1")
@@ -536,7 +557,7 @@ func TestBuildEnrichedPrompt(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("basic prompt without memory", func(t *testing.T) {
-		result := vnext.BuildEnrichedPrompt(ctx, "You are a helpful assistant", "Hello", nil, nil)
+		result, _, _ := vnext.BuildEnrichedPrompt(ctx, "You are a helpful assistant", "Hello", nil, nil)
 
 		assert.Equal(t, "You are a helpful assistant", result.System)
 		assert.Equal(t, "Hello", result.User)
@@ -555,7 +576,7 @@ func TestBuildEnrichedPrompt(t *testing.T) {
 			},
 		}
 
-		result := vnext.BuildEnrichedPrompt(ctx, "You are a helpful assistant", "Hello", mock, config)
+		result, _, _ := vnext.BuildEnrichedPrompt(ctx, "You are a helpful assistant", "Hello", mock, config)
 
 		assert.Equal(t, "You are a helpful assistant", result.System)
 		assert.Contains(t, result.User, "Relevant Context")
@@ -579,12 +600,9 @@ func TestBuildEnrichedPrompt(t *testing.T) {
 			},
 		}
 
-		result := vnext.BuildEnrichedPrompt(ctx, "You are a helpful assistant", "Hello", mock, config)
+		result, _, _ := vnext.BuildEnrichedPrompt(ctx, "You are a helpful assistant", "Hello", mock, config)
 
 		assert.Contains(t, result.User, "Previous Conversation")
 		assert.Contains(t, result.User, "Previous message")
 	})
 }
-
-
-

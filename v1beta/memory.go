@@ -176,8 +176,12 @@ func NewMemory(config *MemoryConfig) (Memory, error) {
 // QuickMemory creates an in-memory provider for quick testing
 func QuickMemory() Memory {
 	config := &MemoryConfig{
-		Provider:   "memory",
+		Provider:   "chromem",
 		Connection: "memory",
+		Options: map[string]string{
+			"embedding_provider": "dummy",
+			"dimensions":         "1536",
+		},
 	}
 	memory, err := NewMemory(config)
 	if err != nil {

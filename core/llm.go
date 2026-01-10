@@ -21,11 +21,25 @@ type ModelParameters struct {
 	MaxTokens   *int32   // Max tokens to generate. nil uses the provider's default.
 }
 
+// ToolDefinition describes a callable function for native tool calling.
+type ToolDefinition struct {
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
+}
+
+// FunctionDefinition captures the schema for a callable tool.
+type FunctionDefinition struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
 // Prompt represents the input to a language model call.
 type Prompt struct {
-	System     string          // System message sets the context or instructions for the model.
-	User       string          // User message is the primary input or question.
-	Parameters ModelParameters // Parameters specify model configuration for this call.
+	System     string           // System message sets the context or instructions for the model.
+	User       string           // User message is the primary input or question.
+	Parameters ModelParameters  // Parameters specify model configuration for this call.
+	Tools      []ToolDefinition // Native tool definitions (OpenAI-compatible)
 }
 
 // UsageStats contains token usage information for a model call.
@@ -40,6 +54,20 @@ type Response struct {
 	Content      string     // The primary text response from the model.
 	Usage        UsageStats // Token usage statistics for the call.
 	FinishReason string     // Why the model stopped generating tokens.
+	ToolCalls    []ToolCallResponse
+}
+
+// ToolCallResponse represents a structured tool call from the model.
+type ToolCallResponse struct {
+	ID       string               `json:"id,omitempty"`
+	Type     string               `json:"type"`
+	Function FunctionCallResponse `json:"function"`
+}
+
+// FunctionCallResponse captures the function name and arguments from a tool call.
+type FunctionCallResponse struct {
+	Name      string                 `json:"name"`
+	Arguments map[string]interface{} `json:"arguments"`
 }
 
 // Token represents a single token streamed from a language model.
@@ -322,6 +350,7 @@ func (a *coreModelProviderAdapter) Call(ctx context.Context, prompt Prompt) (Res
 			Temperature: prompt.Parameters.Temperature,
 			MaxTokens:   prompt.Parameters.MaxTokens,
 		},
+		Tools: convertCoreToolsToInternal(prompt.Tools),
 	}
 
 	resp, err := a.adapter.Call(ctx, internalPrompt)
@@ -337,6 +366,7 @@ func (a *coreModelProviderAdapter) Call(ctx context.Context, prompt Prompt) (Res
 			TotalTokens:      resp.Usage.TotalTokens,
 		},
 		FinishReason: resp.FinishReason,
+		ToolCalls:    convertInternalToolCallsToCore(resp.ToolCalls),
 	}, nil
 }
 
@@ -348,6 +378,7 @@ func (a *coreModelProviderAdapter) Stream(ctx context.Context, prompt Prompt) (<
 			Temperature: prompt.Parameters.Temperature,
 			MaxTokens:   prompt.Parameters.MaxTokens,
 		},
+		Tools: convertCoreToolsToInternal(prompt.Tools),
 	}
 
 	internalChan, err := a.adapter.Stream(ctx, internalPrompt)
@@ -400,6 +431,44 @@ func (a *directCoreLLMAdapter) Complete(ctx context.Context, systemPrompt string
 		return "", err
 	}
 	return resp.Content, nil
+}
+
+// convertCoreToolsToInternal adapts core tool definitions to internal types.
+func convertCoreToolsToInternal(tools []ToolDefinition) []llm.ToolDefinition {
+	if len(tools) == 0 {
+		return nil
+	}
+	res := make([]llm.ToolDefinition, len(tools))
+	for i, t := range tools {
+		res[i] = llm.ToolDefinition{
+			Type: t.Type,
+			Function: llm.FunctionDefinition{
+				Name:        t.Function.Name,
+				Description: t.Function.Description,
+				Parameters:  t.Function.Parameters,
+			},
+		}
+	}
+	return res
+}
+
+// convertInternalToolCallsToCore maps internal tool call responses to core types.
+func convertInternalToolCallsToCore(calls []llm.ToolCallResponse) []ToolCallResponse {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]ToolCallResponse, len(calls))
+	for i, c := range calls {
+		out[i] = ToolCallResponse{
+			ID:   c.ID,
+			Type: c.Type,
+			Function: FunctionCallResponse{
+				Name:      c.Function.Name,
+				Arguments: c.Function.Arguments,
+			},
+		}
+	}
+	return out
 }
 
 // NewLLMProvider creates a ModelProvider from AgentLLMConfig with environment variable support

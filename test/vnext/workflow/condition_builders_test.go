@@ -353,5 +353,6 @@ func (m *mockAgentWithTokens) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-
-
+func (m *mockAgentWithTokens) Memory() vnext.Memory {
+	return vnext.QuickMemory()
+}

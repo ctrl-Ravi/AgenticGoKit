@@ -213,11 +213,12 @@ func NewToolManagerWithCache(config *ToolsConfig, cacheConfig *CacheConfig) (Too
 // DefaultToolsConfig returns a default tools configuration
 func DefaultToolsConfig() *ToolsConfig {
 	return &ToolsConfig{
-		Enabled:       true,
-		MaxRetries:    3,
-		Timeout:       30 * time.Second,
-		RateLimit:     100,
-		MaxConcurrent: 10,
+		Enabled:          true,
+		MaxRetries:       3,
+		Timeout:          30 * time.Second,
+		RateLimit:        100,
+		MaxConcurrent:    10,
+		SingleCallPolicy: "best",
 		Cache: &CacheConfig{
 			Enabled:         true,
 			TTL:             15 * time.Minute,
@@ -785,4 +786,3 @@ func ValidateCircuitBreakerConfig(c *CircuitBreakerConfig) error {
 
 	return nil
 }
-

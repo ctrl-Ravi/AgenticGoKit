@@ -21,6 +21,7 @@ type OllamaAdapter struct {
 	embeddingModel string
 	maxTokens      int
 	temperature    float32
+	httpClient     *http.Client
 }
 
 // NewOllamaAdapter creates a new OllamaAdapter instance.
@@ -39,12 +40,17 @@ func NewOllamaAdapter(baseURL, model string, maxTokens int, temperature float32)
 		temperature = 0.7 // Default temperature
 	}
 
+	// Reuse one HTTP client with keep-alive to avoid connection churn and model reload latency
+	// Use optimized transport configuration for best performance
+	client := NewOptimizedHTTPClient(120 * time.Second)
+
 	return &OllamaAdapter{
 		baseURL:        baseURL,
 		model:          model,
 		embeddingModel: "nomic-embed-text:latest", // Default embedding model
 		maxTokens:      maxTokens,
 		temperature:    temperature,
+		httpClient:     client,
 	}, nil
 }
 
@@ -57,6 +63,10 @@ func (o *OllamaAdapter) SetEmbeddingModel(model string) {
 
 // Call implements the ModelProvider interface for a single request/response.
 func (o *OllamaAdapter) Call(ctx context.Context, prompt Prompt) (Response, error) {
+	// Ensure HTTP client is initialized for tests that construct adapter directly
+	if o.httpClient == nil {
+		o.httpClient = NewOptimizedHTTPClient(120 * time.Second)
+	}
 	if prompt.System == "" && prompt.User == "" {
 		return Response{}, errors.New("both system and user prompts cannot be empty")
 	}
@@ -104,8 +114,8 @@ func (o *OllamaAdapter) Call(ctx context.Context, prompt Prompt) (Response, erro
 				}
 				req.Header.Set("User-Agent", "AgenticGoKit/1.0")
 
-				client := &http.Client{Timeout: 30 * time.Second}
-				resp, err := client.Do(req)
+				// PERFORMANCE: Reuse adapter's httpClient for connection pooling
+				resp, err := o.httpClient.Do(req)
 				if err != nil {
 					continue
 				}
@@ -144,13 +154,23 @@ func (o *OllamaAdapter) Call(ctx context.Context, prompt Prompt) (Response, erro
 		"stream":      false,
 	}
 
+	// Include native tools if provided
+	if len(prompt.Tools) > 0 {
+		tools := make([]map[string]interface{}, len(prompt.Tools))
+		for i, tool := range prompt.Tools {
+			tools[i] = map[string]interface{}{
+				"type":     tool.Type,
+				"function": tool.Function,
+			}
+		}
+		requestBody["tools"] = tools
+		// Hint the model to choose tools automatically when appropriate
+		requestBody["tool_choice"] = "auto"
+	}
+
 	payload, err := json.Marshal(requestBody)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to marshal request body: %w", err)
-	}
-	// Make the HTTP request with timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second, // Add 30 second timeout
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/api/chat", o.baseURL), bytes.NewBuffer(payload))
 	if err != nil {
@@ -158,7 +178,7 @@ func (o *OllamaAdapter) Call(ctx context.Context, prompt Prompt) (Response, erro
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return Response{}, fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -171,20 +191,45 @@ func (o *OllamaAdapter) Call(ctx context.Context, prompt Prompt) (Response, erro
 
 	var apiResp struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Function struct {
+					Name      string                 `json:"name"`
+					Arguments map[string]interface{} `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls,omitempty"`
 		} `json:"message"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return Response{}, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return Response{
+	response := Response{
 		Content: apiResp.Message.Content,
-	}, nil
+	}
+
+	if len(apiResp.Message.ToolCalls) > 0 {
+		response.ToolCalls = make([]ToolCallResponse, len(apiResp.Message.ToolCalls))
+		for i, tc := range apiResp.Message.ToolCalls {
+			response.ToolCalls[i] = ToolCallResponse{
+				Type: "function",
+				Function: FunctionCallResponse{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				},
+			}
+		}
+	}
+
+	return response, nil
 }
 
 // Stream implements the ModelProvider interface for streaming responses.
 func (o *OllamaAdapter) Stream(ctx context.Context, prompt Prompt) (<-chan Token, error) {
+	// Ensure HTTP client is initialized for tests that construct adapter directly
+	if o.httpClient == nil {
+		o.httpClient = NewOptimizedHTTPClient(120 * time.Second)
+	}
 	// Create the request payload for Ollama streaming API
 	payload := map[string]interface{}{
 		"model":  o.model,
@@ -214,8 +259,8 @@ func (o *OllamaAdapter) Stream(ctx context.Context, prompt Prompt) (<-chan Token
 				}
 				req.Header.Set("User-Agent", "AgenticGoKit/1.0")
 
-				client := &http.Client{Timeout: 30 * time.Second}
-				resp, err := client.Do(req)
+				// PERFORMANCE: Reuse adapter's httpClient for connection pooling
+				resp, err := o.httpClient.Do(req)
 				if err != nil {
 					continue
 				}
@@ -264,8 +309,7 @@ func (o *OllamaAdapter) Stream(ctx context.Context, prompt Prompt) (<-chan Token
 	req.Header.Set("Content-Type", "application/json")
 
 	// Make the request
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
@@ -327,6 +371,10 @@ func (o *OllamaAdapter) Stream(ctx context.Context, prompt Prompt) (<-chan Token
 
 // Embeddings implements the ModelProvider interface for generating embeddings.
 func (o *OllamaAdapter) Embeddings(ctx context.Context, texts []string) ([][]float64, error) {
+	// Ensure HTTP client is initialized for tests that construct adapter directly
+	if o.httpClient == nil {
+		o.httpClient = NewOptimizedHTTPClient(120 * time.Second)
+	}
 	if len(texts) == 0 {
 		return [][]float64{}, nil
 	}
@@ -349,17 +397,16 @@ func (o *OllamaAdapter) Embeddings(ctx context.Context, texts []string) ([][]flo
 			return nil, fmt.Errorf("failed to marshal request body for text %d: %w", i, err)
 		}
 
-		// Make the HTTP request with timeout
-		client := &http.Client{
-			Timeout: 30 * time.Second,
-		}
+		// Make the HTTP request using the reusable httpClient
+		// PERFORMANCE FIX: Reuse adapter's httpClient instead of creating new one per request
+		// This enables connection pooling and keep-alive for embeddings
 		req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/api/embeddings", o.baseURL), bytes.NewBuffer(payload))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HTTP request for text %d: %w", i, err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := client.Do(req)
+		resp, err := o.httpClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("HTTP request failed for text %d: %w", i, err)
 		}

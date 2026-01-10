@@ -88,7 +88,7 @@ func TestLLMConfig(t *testing.T) {
 // TestMemoryConfig tests memory configuration
 func TestMemoryConfig(t *testing.T) {
 	memConfig := &vnext.MemoryConfig{
-		Provider:   "memory",
+		Provider:   "chromem",
 		Connection: "local",
 		RAG: &vnext.RAGConfig{
 			MaxTokens:       1000,
@@ -101,8 +101,8 @@ func TestMemoryConfig(t *testing.T) {
 		},
 	}
 
-	if memConfig.Provider != "memory" {
-		t.Errorf("Provider = %s, want memory", memConfig.Provider)
+	if memConfig.Provider != "chromem" {
+		t.Errorf("Provider = %s, want chromem", memConfig.Provider)
 	}
 
 	if memConfig.RAG == nil {
@@ -750,6 +750,3 @@ func TestConfigWithAllFeatures(t *testing.T) {
 		t.Error("Streaming should be configured")
 	}
 }
-
-
-

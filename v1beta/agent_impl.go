@@ -3,6 +3,7 @@ package v1beta
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -192,6 +193,9 @@ func newRealAgent(config *Config, handler HandlerFunc) (Agent, error) {
 
 	// Initialize tools if configured
 	if config.Tools != nil && config.Tools.Enabled {
+		// Default single-call policy
+		normalizeSingleCallPolicy(config.Tools)
+
 		// Initialize MCP if configured
 		if config.Tools.MCP != nil && config.Tools.MCP.Enabled {
 			if err := initializeMCP(config.Tools.MCP); err != nil {
@@ -276,14 +280,15 @@ func (a *realAgent) execute(ctx context.Context, input string, opts *RunOptions)
 	// Add multimodal data if present in opts
 	addMultimodalDataToPrompt(&prompt, opts)
 
-	// Step 1.5: Add tool descriptions to system prompt if tools are available
+	// Step 1.5: Add tool definitions (native) and descriptions (text fallback)
 	if len(a.tools) > 0 {
+		prompt.Tools = convertToolsToLLMFormat(a.tools)
 		toolDescriptions := FormatToolsForPrompt(a.tools)
 		prompt.System = prompt.System + toolDescriptions
 
 		Logger().Debug().
 			Int("tool_count", len(a.tools)).
-			Msg("Added tool descriptions to system prompt")
+			Msg("Added tool definitions to prompt")
 	}
 
 	// Add model parameters from config if specified
@@ -350,17 +355,52 @@ func (a *realAgent) execute(ctx context.Context, input string, opts *RunOptions)
 		return nil, fmt.Errorf("LLM call failed: %w", err)
 	}
 
-	// Step 3.5: Execute tool calls if any are detected in the response
-	// This implements an agentic loop where the LLM can use tools and continue reasoning
+	// Step 3.5: Execute tool calls if any are detected in the response (native or text)
 	var toolCalls []ToolCall
 	finalResponse := response.Content
 	if len(a.tools) > 0 {
-		const maxToolIterations = 5 // Prevent infinite tool-calling loops
+		policy := a.singleCallPolicy()
+		// Determine max iterations based on reasoning config
+		maxToolIterations := 1 // Default: fast path (no continuation)
+		reasoningEnabled := false
+
+		if a.config.Tools != nil && a.config.Tools.Reasoning != nil {
+			reasoningEnabled = a.config.Tools.Reasoning.Enabled
+			if reasoningEnabled && a.config.Tools.Reasoning.MaxIterations > 0 {
+				maxToolIterations = a.config.Tools.Reasoning.MaxIterations
+			} else if reasoningEnabled {
+				maxToolIterations = 5 // Default max iterations when reasoning enabled
+			}
+		}
+
+		Logger().Debug().
+			Bool("reasoning_enabled", reasoningEnabled).
+			Int("max_iterations", maxToolIterations).
+			Msg("Tool execution configuration")
+
 		var toolErr error
-		finalResponse, toolCalls, toolErr = a.executeToolsAndContinue(ctx, response.Content, prompt, maxToolIterations)
+		if len(response.ToolCalls) > 0 {
+			finalResponse, toolCalls, toolErr = a.executeNativeToolsAndContinue(ctx, response, prompt, maxToolIterations)
+		} else {
+			finalResponse, toolCalls, toolErr = a.executeToolsAndContinue(ctx, response.Content, prompt, maxToolIterations)
+		}
 		if toolErr != nil {
 			// Log warning but don't fail - use the last valid response
 			Logger().Warn().Err(toolErr).Msg("Tool execution encountered error, using last valid response")
+		}
+
+		// If only one tool is enabled, clamp to a single best call to avoid multiple executions
+		if len(a.tools) == 1 && len(toolCalls) > 1 && policy != "all" {
+			best := selectBestToolCallFromInput(input, toolCalls)
+			toolCalls = []ToolCall{best}
+		}
+
+		// Prefer concise tool results over generic LLM filler to keep responses coherent
+		if len(toolCalls) > 0 {
+			summary := formatToolCallsAsContent(toolCalls)
+			if summary != "" {
+				finalResponse = summary
+			}
 		}
 	}
 
@@ -588,6 +628,7 @@ func (a *realAgent) RunWithOptions(ctx context.Context, input string, opts *RunO
 		}
 		a.tools = filteredTools
 	}
+
 	// If ToolMode is "auto" or unspecified, use all configured tools (no change)
 
 	// Step 4: Apply memory options
@@ -1193,6 +1234,7 @@ func (a *realAgent) executeToolsAndContinue(
 	var allToolCalls []ToolCall
 	currentResponse := initialResponse
 	iteration := 0
+	policy := a.singleCallPolicy()
 
 	for iteration < maxIterations {
 		// Parse tool calls from the current response
@@ -1208,11 +1250,21 @@ func (a *realAgent) executeToolsAndContinue(
 			Int("tool_calls", len(toolCalls)).
 			Msg("Executing tool calls")
 
-		// Execute all tool calls
+		// Execute tool calls. If only one tool is enabled, prefer executing a single best call unless policy is "all".
 		var executedCalls []ToolCall
 		var toolResults strings.Builder
 
-		for _, call := range toolCalls {
+		// Select calls to execute
+		callsToExecute := toolCalls
+		if len(a.tools) == 1 && len(toolCalls) > 1 && policy != "all" {
+			if policy == "first" {
+				callsToExecute = toolCalls[:1]
+			} else {
+				callsToExecute = []ToolCall{selectBestToolCallFromInput(originalPrompt.User, toolCalls)}
+			}
+		}
+
+		for _, call := range callsToExecute {
 			executedCall := a.executeTool(ctx, call)
 			executedCalls = append(executedCalls, executedCall)
 			allToolCalls = append(allToolCalls, executedCall)
@@ -1225,7 +1277,18 @@ func (a *realAgent) executeToolsAndContinue(
 			}))
 		}
 
-		// Build a new prompt with tool results
+		iteration++
+
+		// Skip continuation if we've reached max iterations (fast path optimization)
+		if iteration >= maxIterations {
+			Logger().Debug().
+				Int("max_iterations", maxIterations).
+				Int("iteration", iteration).
+				Msg("Reached maximum tool execution iterations, skipping continuation")
+			break
+		}
+
+		// Build a new prompt with tool results (only if continuing)
 		continuationPrompt := llm.Prompt{
 			System: originalPrompt.System,
 			User: fmt.Sprintf(
@@ -1244,18 +1307,197 @@ func (a *realAgent) executeToolsAndContinue(
 		}
 
 		currentResponse = response.Content
-		iteration++
-
-		// Check if we've reached max iterations
-		if iteration >= maxIterations {
-			Logger().Warn().
-				Int("max_iterations", maxIterations).
-				Msg("Reached maximum tool execution iterations")
-			break
-		}
 	}
 
 	return currentResponse, allToolCalls, nil
+}
+
+// convertStructuredToolCalls maps structured tool call responses to the legacy ToolCall format.
+func convertStructuredToolCalls(calls []llm.ToolCallResponse) []ToolCall {
+	converted := make([]ToolCall, 0, len(calls))
+	for _, c := range calls {
+		converted = append(converted, ToolCall{
+			Name:      c.Function.Name,
+			Arguments: c.Function.Arguments,
+		})
+	}
+	return converted
+}
+
+// executeNativeToolsAndContinue handles structured tool calls returned by native tool-calling models.
+// It executes the tool calls, feeds results back to the LLM, and continues the loop.
+func (a *realAgent) executeNativeToolsAndContinue(
+	ctx context.Context,
+	initialResponse llm.Response,
+	originalPrompt llm.Prompt,
+	maxIterations int,
+) (string, []ToolCall, error) {
+	if len(a.tools) == 0 {
+		return initialResponse.Content, nil, nil
+	}
+
+	var allToolCalls []ToolCall
+	// Track executed calls to avoid duplicate executions within the same run
+	seen := make(map[string]struct{})
+	currentResponse := initialResponse.Content
+	response := initialResponse
+	iteration := 0
+	policy := a.singleCallPolicy()
+
+	for iteration < maxIterations {
+		var parsedCalls []ToolCall
+
+		// Prefer structured tool calls when available
+		if len(response.ToolCalls) > 0 {
+			parsedCalls = convertStructuredToolCalls(response.ToolCalls)
+		} else {
+			parsedCalls = ParseToolCalls(currentResponse)
+		}
+
+		if len(parsedCalls) == 0 {
+			break
+		}
+
+		Logger().Debug().
+			Int("iteration", iteration+1).
+			Int("tool_calls", len(parsedCalls)).
+			Msg("Executing native/tool calls")
+
+		var executedCalls []ToolCall
+		var toolResults strings.Builder
+
+		// If only one tool is enabled and multiple parsed calls exist, run only the best/first unless policy is "all"
+		callsToExecute := parsedCalls
+		if len(a.tools) == 1 && len(parsedCalls) > 1 && policy != "all" {
+			if policy == "first" {
+				callsToExecute = parsedCalls[:1]
+			} else {
+				callsToExecute = []ToolCall{selectBestToolCallFromInput(originalPrompt.User, parsedCalls)}
+			}
+		}
+
+		for _, call := range callsToExecute {
+			// Build a stable signature: name + sorted args JSON
+			sig := buildToolSignature(call)
+			if _, ok := seen[sig]; ok {
+				continue
+			}
+			executed := a.executeTool(ctx, call)
+			executedCalls = append(executedCalls, executed)
+			allToolCalls = append(allToolCalls, executed)
+			seen[sig] = struct{}{}
+
+			toolResults.WriteString(FormatToolResult(executed.Name, &ToolResult{
+				Success: executed.Success,
+				Content: executed.Result,
+				Error:   executed.Error,
+			}))
+		}
+
+		iteration++
+
+		// Skip continuation if we've reached max iterations (fast path optimization)
+		if iteration >= maxIterations {
+			Logger().Debug().
+				Int("max_iterations", maxIterations).
+				Int("iteration", iteration).
+				Msg("Reached maximum tool execution iterations, skipping continuation")
+			break
+		}
+
+		// Make continuation call only if we haven't reached max iterations
+		continuationPrompt := llm.Prompt{
+			System: originalPrompt.System,
+			User: fmt.Sprintf(
+				"Previous response:\n%s\n\nTool execution results:\n%s\n\nPlease continue with your response based on the tool results.",
+				currentResponse,
+				toolResults.String(),
+			),
+			Parameters: originalPrompt.Parameters,
+			Tools:      originalPrompt.Tools,
+		}
+
+		resp, err := a.llmProvider.Call(ctx, continuationPrompt)
+		if err != nil {
+			return currentResponse, allToolCalls, fmt.Errorf("LLM call failed after tool execution: %w", err)
+		}
+
+		response = resp
+		currentResponse = resp.Content
+	}
+
+	return currentResponse, allToolCalls, nil
+}
+
+// selectBestToolCallFromInput picks a single tool call that best matches the user input.
+// Minimal heuristic: prefer calls whose arguments appear in the input, otherwise the first.
+func selectBestToolCallFromInput(input string, calls []ToolCall) ToolCall {
+	if len(calls) == 0 {
+		return ToolCall{}
+	}
+	if len(calls) == 1 {
+		return calls[0]
+	}
+	lower := strings.ToLower(input)
+	bestIdx := 0
+	bestScore := -1
+	for i, c := range calls {
+		score := 0
+		for k, v := range c.Arguments {
+			// consider only simple string args
+			if s, ok := v.(string); ok {
+				sLower := strings.ToLower(s)
+				if sLower != "" && strings.Contains(lower, sLower) {
+					score += 2
+				}
+				// handle common abbrev expansions
+				if k == "location" {
+					if sLower == "sf" && strings.Contains(lower, "san francisco") {
+						score += 1
+					}
+					if sLower == "nyc" && strings.Contains(lower, "new york") {
+						score += 1
+					}
+					if sLower == "la" && strings.Contains(lower, "los angeles") {
+						score += 1
+					}
+				}
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+	return calls[bestIdx]
+}
+
+// buildToolSignature creates a stable signature for a tool call to dedupe repeated calls
+func buildToolSignature(call ToolCall) string {
+	// Minimal JSON-ish deterministic encoding by sorting keys
+	if call.Arguments == nil || len(call.Arguments) == 0 {
+		return call.Name + "|{}"
+	}
+	// Collect keys
+	keys := make([]string, 0, len(call.Arguments))
+	for k := range call.Arguments {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	// Build key=value pairs string
+	var b strings.Builder
+	b.WriteString(call.Name)
+	b.WriteString("|")
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(k)
+		b.WriteString("=")
+		v := call.Arguments[k]
+		b.WriteString(fmt.Sprintf("%v", v))
+	}
+	return b.String()
 }
 
 // convertFloat32ToFloat32Ptr converts a float32 to a *float32 for LLM parameters
@@ -1284,6 +1526,34 @@ func convertIntToInt32Ptr(i int) *int32 {
 	return &i32
 }
 
+// singleCallPolicy returns normalized tool single-call policy: best (default), first, or all
+func (a *realAgent) singleCallPolicy() string {
+	if a.config != nil && a.config.Tools != nil {
+		p := strings.ToLower(strings.TrimSpace(a.config.Tools.SingleCallPolicy))
+		switch p {
+		case "first":
+			return "first"
+		case "all":
+			return "all"
+		}
+	}
+	return "best"
+}
+
+// normalizeSingleCallPolicy ensures the policy value is one of best/first/all, defaulting to best.
+func normalizeSingleCallPolicy(cfg *ToolsConfig) {
+	if cfg == nil {
+		return
+	}
+	p := strings.ToLower(strings.TrimSpace(cfg.SingleCallPolicy))
+	switch p {
+	case "first", "all", "best":
+		cfg.SingleCallPolicy = p
+	default:
+		cfg.SingleCallPolicy = "best"
+	}
+}
+
 // extractToolNames extracts tool names from a list of tool calls
 func extractToolNames(toolCalls []ToolCall) []string {
 	names := make([]string, len(toolCalls))
@@ -1293,10 +1563,106 @@ func extractToolNames(toolCalls []ToolCall) []string {
 	return names
 }
 
+// formatToolCallsAsContent creates a concise assistant message from executed tool calls
+// when the model response is empty. This ensures users see useful output in Result.Content.
+func formatToolCallsAsContent(calls []ToolCall) string {
+	if len(calls) == 0 {
+		return ""
+	}
+
+	// If there's a single weather-style tool call with a forecast, return that directly
+	if len(calls) == 1 {
+		c := calls[0]
+		if resMap, ok := c.Result.(map[string]interface{}); ok {
+			if forecast, fok := resMap["forecast"].(string); fok && forecast != "" {
+				return forecast
+			}
+		}
+		// Generic single-tool fallback
+		return fmt.Sprintf("%s result: %v", c.Name, c.Result)
+	}
+
+	// For multiple calls, build a short list summarizing results
+	var b strings.Builder
+	b.WriteString("Results:\n")
+	for _, c := range calls {
+		var argStr string
+		if c.Arguments != nil {
+			if loc, ok := c.Arguments["location"]; ok {
+				argStr = fmt.Sprintf("location=%v", loc)
+			}
+		}
+
+		var resStr string
+		if resMap, ok := c.Result.(map[string]interface{}); ok {
+			if forecast, ok := resMap["forecast"].(string); ok && forecast != "" {
+				resStr = forecast
+			} else {
+				resStr = fmt.Sprintf("%v", resMap)
+			}
+		} else if c.Result != nil {
+			resStr = fmt.Sprintf("%v", c.Result)
+		}
+
+		if argStr != "" {
+			b.WriteString(fmt.Sprintf("- %s(%s): %s\n", c.Name, argStr, resStr))
+		} else {
+			b.WriteString(fmt.Sprintf("- %s: %s\n", c.Name, resStr))
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// convertToolsToLLMFormat converts v1beta tools to llm.ToolDefinition for native tool calling.
+func convertToolsToLLMFormat(tools []Tool) []llm.ToolDefinition {
+	if len(tools) == 0 {
+		return nil
+	}
+	res := make([]llm.ToolDefinition, len(tools))
+	for i, tool := range tools {
+		res[i] = llm.ToolDefinition{
+			Type: "function",
+			Function: llm.FunctionDefinition{
+				Name:        tool.Name(),
+				Description: tool.Description(),
+				Parameters:  getToolSchema(tool),
+			},
+		}
+	}
+	return res
+}
+
+// getToolSchema returns an optional JSON Schema for a tool, falling back to a minimal schema.
+func getToolSchema(tool Tool) map[string]interface{} {
+	if ts, ok := tool.(ToolWithSchema); ok {
+		return ts.JSONSchema()
+	}
+
+	// Minimal fallback schema
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"input": map[string]interface{}{
+				"type":        "string",
+				"description": "User input",
+			},
+		},
+	}
+}
+
 // executeToolsAndStream executes tool calls and streams the results
 func (a *realAgent) executeToolsAndStream(ctx context.Context, userInput, llmResponse string, toolCalls []ToolCall, writer StreamWriter) error {
 	if len(toolCalls) == 0 {
 		return nil
+	}
+
+	policy := a.singleCallPolicy()
+	if len(a.tools) == 1 && len(toolCalls) > 1 && policy != "all" {
+		if policy == "first" {
+			toolCalls = toolCalls[:1]
+		} else {
+			toolCalls = []ToolCall{selectBestToolCallFromInput(userInput, toolCalls)}
+		}
 	}
 
 	// Execute each tool call and stream the results

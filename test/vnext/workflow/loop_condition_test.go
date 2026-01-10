@@ -67,6 +67,12 @@ func (m *mockSequenceAgent) RunStream(ctx context.Context, input string, opts ..
 	}()
 
 	return stream, nil
+
+}
+
+// Memory returns a simple memory provider for tests to satisfy the Agent interface
+func (m *mockSequenceAgent) Memory() vnext.Memory {
+	return vnext.QuickMemory()
 }
 
 func (m *mockSequenceAgent) RunStreamWithOptions(ctx context.Context, input string, runOpts *vnext.RunOptions, streamOpts ...vnext.StreamOption) (vnext.Stream, error) {
@@ -334,6 +340,3 @@ func TestLoopWorkflow_ContextCancellation(t *testing.T) {
 		assert.Equal(t, vnext.ExitContextCancelled, result.IterationInfo.ExitReason)
 	}
 }
-
-
-

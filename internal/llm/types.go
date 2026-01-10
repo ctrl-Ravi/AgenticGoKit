@@ -13,6 +13,19 @@ type ModelParameters struct {
 	// TODO: Add TopP, StopSequences, PresencePenalty, FrequencyPenalty etc.
 }
 
+// ToolDefinition describes a callable function for native tool calling.
+type ToolDefinition struct {
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
+}
+
+// FunctionDefinition captures the schema for a callable tool.
+type FunctionDefinition struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
 // Prompt represents the input to a language model call.
 type Prompt struct {
 	// System message sets the context or instructions for the model.
@@ -27,6 +40,8 @@ type Prompt struct {
 	Video []VideoData
 	// Parameters specify model configuration for this call.
 	Parameters ModelParameters
+	// Tools provides native tool definitions (OpenAI-compatible).
+	Tools []ToolDefinition
 	// TODO: Add fields for message history, function calls/definitions
 }
 
@@ -45,6 +60,8 @@ type Response struct {
 	Usage UsageStats
 	// FinishReason indicates why the model stopped generating tokens (e.g., "stop", "length", "content_filter").
 	FinishReason string
+	// ToolCalls contains structured tool calls (native tool calling models).
+	ToolCalls []ToolCallResponse
 	// Images holds generated images.
 	Images []ImageData
 	// Audio holds generated audio.
@@ -54,6 +71,19 @@ type Response struct {
 	// Attachments holds other media attachments.
 	Attachments []Attachment
 	// TODO: Add fields for function call results, log probabilities, etc.
+}
+
+// ToolCallResponse represents a structured tool call from the model.
+type ToolCallResponse struct {
+	ID       string               `json:"id,omitempty"`
+	Type     string               `json:"type"`
+	Function FunctionCallResponse `json:"function"`
+}
+
+// FunctionCallResponse captures the function name and arguments from a tool call.
+type FunctionCallResponse struct {
+	Name      string                 `json:"name"`
+	Arguments map[string]interface{} `json:"arguments"`
 }
 
 // ImageData represents image content.

@@ -48,7 +48,8 @@ func TestRealMemoryProvider_EnrichWithMemory(t *testing.T) {
 			Provider:   "chromem",
 			MaxResults: 10,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 
@@ -98,7 +99,8 @@ func TestRealMemoryProvider_EnrichWithMemory(t *testing.T) {
 			Provider:   "chromem",
 			MaxResults: 10,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 
@@ -127,7 +129,8 @@ func TestRealMemoryProvider_BuildEnrichedPrompt(t *testing.T) {
 			Provider:   "chromem",
 			MaxResults: 10,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 
@@ -197,7 +200,8 @@ func TestRealMemoryProvider_BuildEnrichedPrompt(t *testing.T) {
 			Provider:   "chromem",
 			MaxResults: 10,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 
@@ -244,7 +248,8 @@ func TestRealMemoryProvider_DualStorage(t *testing.T) {
 			Provider:   "chromem",
 			MaxResults: 10,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 
@@ -296,7 +301,8 @@ func TestRealMemoryProvider_Sessions(t *testing.T) {
 			Provider:   "chromem",
 			MaxResults: 10,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 
@@ -338,7 +344,8 @@ func TestRealMemoryProvider_Sessions(t *testing.T) {
 			Provider:   "chromem",
 			MaxResults: 10,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 
@@ -376,7 +383,8 @@ func TestRealMemoryProvider_KnowledgeBase(t *testing.T) {
 			KnowledgeMaxResults:     10,
 			KnowledgeScoreThreshold: 0.1,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 
@@ -446,7 +454,8 @@ func TestRealMemoryProvider_HybridSearch(t *testing.T) {
 			KnowledgeMaxResults:     10,
 			KnowledgeScoreThreshold: 0.1,
 		}
-		memProvider, err := providers.NewInMemoryProvider(memConfig)
+		embedder := core.NewDummyEmbeddingService(memConfig.Dimensions)
+		memProvider, err := providers.NewChromemProvider(memConfig, embedder)
 		require.NoError(t, err)
 		defer memProvider.Close()
 

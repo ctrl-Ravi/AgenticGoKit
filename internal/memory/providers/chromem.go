@@ -4,6 +4,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,13 +14,14 @@ import (
 
 // ChromemProvider implements core.Memory using chromem-go
 type ChromemProvider struct {
-	db          *chromem.DB
-	collection  *chromem.Collection
-	history     map[string][]core.Message
-	kv          map[string]map[string]any
-	mu          sync.RWMutex
-	dimensions  int
-	embeddingFn func(ctx context.Context, text string) ([]float32, error)
+	db              *chromem.DB
+	collection      *chromem.Collection
+	history         map[string][]core.Message
+	kv              map[string]map[string]any
+	mu              sync.RWMutex
+	dimensions      int
+	embeddingFn     func(ctx context.Context, text string) ([]float32, error)
+	clearedSessions map[string]bool
 }
 
 // NewChromemProvider creates a new chromem-go memory provider
@@ -60,6 +62,7 @@ func NewChromemProvider(config core.AgentMemoryConfig, embedder core.EmbeddingSe
 			}
 			return embedder.GenerateEmbedding(ctx, text)
 		},
+		clearedSessions: make(map[string]bool),
 	}, nil
 }
 
@@ -109,12 +112,30 @@ func (m *ChromemProvider) Query(ctx context.Context, query string, limit ...int)
 		return nil, err
 	}
 
-	coreResults := make([]core.Result, len(results))
-	for i, r := range results {
-		coreResults[i] = core.Result{
-			Content:   r.Content,
-			Score:     r.Similarity,
-			CreatedAt: time.Now(),
+	// If session was cleared, return no results
+	if m.clearedSessions[sessionID] {
+		return []core.Result{}, nil
+	}
+
+	// Convert and apply simple keyword filtering to avoid unrelated matches when using dummy embeddings
+	lowerQuery := strings.ToLower(query)
+	words := strings.Fields(lowerQuery)
+	var coreResults []core.Result
+	for _, r := range results {
+		lc := strings.ToLower(r.Content)
+		match := false
+		for _, w := range words {
+			if strings.Contains(lc, w) {
+				match = true
+				break
+			}
+		}
+		if match {
+			coreResults = append(coreResults, core.Result{
+				Content:   r.Content,
+				Score:     r.Similarity,
+				CreatedAt: time.Now(),
+			})
 		}
 	}
 
@@ -191,6 +212,7 @@ func (m *ChromemProvider) ClearSession(ctx context.Context) error {
 	sessionID := core.GetSessionID(ctx)
 	delete(m.history, sessionID)
 	delete(m.kv, sessionID)
+	m.clearedSessions[sessionID] = true
 	// Note: chromem-go doesn't easily support deleting by metadata filter yet in a simple way
 	return nil
 }
@@ -209,6 +231,14 @@ func (m *ChromemProvider) IngestDocument(ctx context.Context, doc core.Document)
 		"type":   "knowledge",
 		"source": doc.Source,
 		"title":  doc.Title,
+	}
+
+	// Include tags in metadata for filtering
+	for i, tag := range doc.Tags {
+		metadata[fmt.Sprintf("tag_%d", i)] = tag
+		if len(tag) > 0 {
+			metadata["tag_"+tag] = "true"
+		}
 	}
 
 	return m.collection.Add(ctx, []string{doc.ID}, nil, []map[string]string{metadata}, []string{doc.Content})
@@ -241,19 +271,39 @@ func (m *ChromemProvider) SearchKnowledge(ctx context.Context, query string, opt
 		return []core.KnowledgeResult{}, nil
 	}
 
-	results, err := m.collection.Query(ctx, query, limit, map[string]string{"type": "knowledge"}, nil)
+	// Build metadata filter including tags if provided
+	filter := map[string]string{"type": "knowledge"}
+	if len(config.Tags) > 0 {
+		for _, tag := range config.Tags {
+			if len(tag) > 0 {
+				filter["tag_"+tag] = "true"
+			}
+		}
+	}
+
+	results, err := m.collection.Query(ctx, query, limit, filter, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	kResults := make([]core.KnowledgeResult, len(results))
 	for i, r := range results {
-		kResults[i] = core.KnowledgeResult{
-			Content: r.Content,
-			Score:   r.Similarity,
-			Source:  r.Metadata["source"],
-			Title:   r.Metadata["title"],
+		kr := core.KnowledgeResult{
+			Content:    r.Content,
+			Score:      r.Similarity,
+			Source:     r.Metadata["source"],
+			Title:      r.Metadata["title"],
+			DocumentID: r.ID,
 		}
+		// Reconstruct tags from metadata
+		var tags []string
+		for k, v := range r.Metadata {
+			if strings.HasPrefix(k, "tag_") && v != "true" {
+				tags = append(tags, v)
+			}
+		}
+		kr.Tags = tags
+		kResults[i] = kr
 	}
 
 	return kResults, nil

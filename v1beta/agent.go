@@ -410,6 +410,12 @@ type Tool interface {
 	Execute(ctx context.Context, args map[string]interface{}) (*ToolResult, error)
 }
 
+// ToolWithSchema optionally provides a JSON Schema for native tool calling.
+type ToolWithSchema interface {
+	Tool
+	JSONSchema() map[string]interface{}
+}
+
 // RunOptions defines flexible options for agent execution
 // This provides comprehensive configuration for different execution scenarios
 type RunOptions struct {

@@ -53,8 +53,13 @@ func (tf *TableFormatter) FormatDocuments(docs []core.KnowledgeResult) string {
 		if title == "" {
 			title = doc.Source
 		}
-		if len(title) > 37 {
-			title = title[:34] + "..."
+		// Display both title and source when available to match header TITLE/SOURCE
+		displayTitle := title
+		if doc.Source != "" && doc.Source != title {
+			displayTitle = fmt.Sprintf("%s (%s)", title, doc.Source)
+		}
+		if len(displayTitle) > 37 {
+			displayTitle = displayTitle[:34] + "..."
 		}
 
 		// Extract document type from source or metadata
@@ -97,7 +102,7 @@ func (tf *TableFormatter) FormatDocuments(docs []core.KnowledgeResult) string {
 		}
 
 		output.WriteString(fmt.Sprintf("%-40s %-15s %-12s %-20s %s\n",
-			title, docType, chunksInfo, updated, tagsStr))
+			displayTitle, docType, chunksInfo, updated, tagsStr))
 	}
 
 	return output.String()
@@ -343,4 +348,3 @@ func checkMark(success bool) string {
 	}
 	return "✗"
 }
-

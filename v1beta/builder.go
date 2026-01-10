@@ -226,6 +226,40 @@ func WithToolCaching(ttl time.Duration) ToolOption {
 	}
 }
 
+// WithReasoning enables or disables agent reasoning/continuation loops
+// When disabled (default): Fast path - single LLM call, execute tools, return result
+// When enabled: Complex reasoning - LLM calls after tool execution for refinement
+func WithReasoning(enabled bool) ToolOption {
+	return func(tc *ToolsConfig) {
+		if tc.Reasoning == nil {
+			tc.Reasoning = &ReasoningConfig{
+				Enabled:           enabled,
+				MaxIterations:     5,
+				ContinueOnToolUse: false,
+			}
+		} else {
+			tc.Reasoning.Enabled = enabled
+		}
+	}
+}
+
+// WithReasoningConfig provides full control over reasoning behavior
+func WithReasoningConfig(maxIterations int, continueOnToolUse bool) ToolOption {
+	return func(tc *ToolsConfig) {
+		if tc.Reasoning == nil {
+			tc.Reasoning = &ReasoningConfig{
+				Enabled:           true,
+				MaxIterations:     maxIterations,
+				ContinueOnToolUse: continueOnToolUse,
+			}
+		} else {
+			tc.Reasoning.Enabled = true
+			tc.Reasoning.MaxIterations = maxIterations
+			tc.Reasoning.ContinueOnToolUse = continueOnToolUse
+		}
+	}
+}
+
 // WorkflowOption defines functional options for workflow configuration
 type WorkflowOption func(*WorkflowConfig)
 

@@ -169,7 +169,29 @@ func createTools(config *ToolsConfig) ([]Tool, error) {
 			// MCP initialization failure is not fatal - log and continue with internal tools
 			Logger().Warn().Err(err).Msg("Failed to initialize MCP, continuing without MCP tools")
 		} else {
-			Logger().Debug().Msg("MCP initialized successfully, discovering tools...")
+			Logger().Debug().Msg("MCP initialized successfully")
+
+			// Auto-refresh tools by default (batteries included)
+			// Set auto_refresh_tools=false in config to disable
+			autoRefresh := true // Default: batteries included
+			if config.MCP.AutoRefreshTools == false {
+				// Check if explicitly disabled in config
+				autoRefresh = false
+				Logger().Debug().Msg("AutoRefreshTools disabled in config")
+			}
+
+			if autoRefresh {
+				Logger().Debug().Msg("Auto-refreshing tools from MCP servers...")
+				if mgr := GetMCPManager(); mgr != nil {
+					ctx := context.Background()
+					if err := mgr.RefreshTools(ctx); err != nil {
+						Logger().Warn().Err(err).Msg("Auto-refresh failed, continuing with empty tools")
+					} else {
+						Logger().Debug().Msg("Auto-refresh completed successfully")
+					}
+				}
+			}
+
 			// Discover MCP tools
 			mcpTools, err := DiscoverMCPTools()
 			if err != nil {
@@ -178,7 +200,7 @@ func createTools(config *ToolsConfig) ([]Tool, error) {
 				allTools = append(allTools, mcpTools...)
 				Logger().Debug().Int("count", len(mcpTools)).Msg("Discovered MCP tools")
 			} else {
-				Logger().Warn().Msg("DiscoverMCPTools returned zero tools")
+				Logger().Warn().Msg("DiscoverMCPTools returned zero tools (check AutoRefreshTools config)")
 			}
 		}
 	}

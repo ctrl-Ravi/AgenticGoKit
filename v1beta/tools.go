@@ -243,6 +243,7 @@ func DefaultMCPConfig() *MCPConfig {
 	return &MCPConfig{
 		Enabled:           true,
 		Discovery:         true,
+		AutoRefreshTools:  true, // Batteries included: auto-refresh by default
 		ConnectionTimeout: 30 * time.Second,
 		MaxRetries:        3,
 		RetryDelay:        1 * time.Second,

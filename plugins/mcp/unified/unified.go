@@ -3,6 +3,7 @@ package mcp_unified
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -334,14 +335,24 @@ func (m *unifiedMCPManager) discoverToolsFromServer(ctx context.Context, serverN
 
 // createClientForServer creates appropriate client based on server type
 func (m *unifiedMCPManager) createClientForServer(server *core.MCPServerConfig) (*client.Client, error) {
-	builder := client.NewClientBuilder().
-		WithName("agentflow-mcp-client").
-		WithVersion("1.0.0").
-		WithTimeout(30 * time.Second)
+	newClient := func(tr transport.Transport) *client.Client {
+		cfg := client.ClientConfig{
+			Name:    "agentflow-mcp-client",
+			Version: "1.0.0",
+			Timeout: 30 * time.Second,
+		}
+
+		if v := os.Getenv("MCP_NAVIGATOR_DEBUG"); v != "" && v != "0" {
+			cfg.Debug = true
+		}
+
+		return client.NewClient(tr, cfg)
+	}
 
 	switch server.Type {
 	case "tcp":
-		return builder.WithTCPTransport(server.Host, server.Port).Build(), nil
+		tr := transport.NewTCPTransport(server.Host, server.Port)
+		return newClient(tr), nil
 
 	case "http_sse":
 		endpoint := server.Endpoint
@@ -352,9 +363,8 @@ func (m *unifiedMCPManager) createClientForServer(server *core.MCPServerConfig) 
 				return nil, fmt.Errorf("http_sse server %s requires either endpoint or host:port configuration", server.Name)
 			}
 		}
-		// Create SSE transport
 		sseTransport := transport.NewSSETransport(endpoint, "/sse")
-		return builder.WithTransport(sseTransport).Build(), nil
+		return newClient(sseTransport), nil
 
 	case "http_streaming":
 		endpoint := server.Endpoint
@@ -365,16 +375,17 @@ func (m *unifiedMCPManager) createClientForServer(server *core.MCPServerConfig) 
 				return nil, fmt.Errorf("http_streaming server %s requires either endpoint or host:port configuration", server.Name)
 			}
 		}
-		// Create Streaming HTTP transport
 		streamingTransport := transport.NewStreamingHTTPTransport(endpoint, "/stream")
-		return builder.WithTransport(streamingTransport).Build(), nil
+		return newClient(streamingTransport), nil
 
 	case "websocket":
 		url := fmt.Sprintf("ws://%s:%d", server.Host, server.Port)
-		return builder.WithWebSocketTransport(url).Build(), nil
+		tr := transport.NewWebSocketTransport(url)
+		return newClient(tr), nil
 
 	case "stdio":
-		return builder.WithSTDIOTransport(server.Command, []string{}).Build(), nil
+		tr := transport.NewStdioTransport(server.Command, []string{})
+		return newClient(tr), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported transport type: %s", server.Type)
@@ -399,4 +410,3 @@ func init() {
 		return newUnifiedManager(cfg)
 	})
 }
-

@@ -94,6 +94,7 @@ type ReasoningConfig struct {
 type MCPConfig struct {
 	Enabled           bool          `toml:"enabled"`
 	Discovery         bool          `toml:"discovery"`
+	AutoRefreshTools  bool          `toml:"auto_refresh_tools"` // Auto-refresh tools on initialization (default: true)
 	Servers           []MCPServer   `toml:"servers"`
 	Cache             *CacheConfig  `toml:"cache,omitempty"`
 	ConnectionTimeout time.Duration `toml:"connection_timeout"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -757,9 +758,14 @@ func (b *streamlinedBuilder) setupObservability(agent Agent) error {
 	endpoint := os.Getenv("AGK_TRACE_ENDPOINT")
 	filePath := os.Getenv("AGK_TRACE_FILEPATH")
 
-	// For file exporter, generate default filename if not specified
+	// For file exporter, create runs directory structure
 	if exporter == "file" && filePath == "" {
-		filePath = fmt.Sprintf("traces-%s.jsonl", runID)
+		// Create .agk/runs/{runID} directory
+		runDir := filepath.Join(".agk", "runs", runID)
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			return fmt.Errorf("failed to create run directory: %w", err)
+		}
+		filePath = filepath.Join(runDir, "trace.jsonl")
 	}
 
 	// For OTLP exporter, use endpoint if not specified
@@ -799,6 +805,13 @@ func (b *streamlinedBuilder) setupObservability(agent Agent) error {
 	// Store shutdown function in the agent
 	if realAgent, ok := agent.(*realAgent); ok {
 		realAgent.tracerShutdown = shutdown
+
+		// Store run directory for manifest generation on cleanup
+		if exporter == "file" {
+			realAgent.runID = runID
+			realAgent.runDir = filepath.Join(".agk", "runs", runID)
+		}
+
 		fmt.Printf("🔍 Tracing enabled: exporter=%s, endpoint=%s, filePath=%s, runID=%s\n", exporter, endpoint, filePath, runID)
 	}
 

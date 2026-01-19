@@ -1,8 +1,14 @@
 package v1beta
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -81,6 +87,8 @@ type realAgent struct {
 
 	// Observability
 	tracerShutdown func(context.Context) error
+	runID          string
+	runDir         string
 }
 
 // sessionState tracks per-session information for the agent
@@ -1226,6 +1234,13 @@ func (a *realAgent) Cleanup(ctx context.Context) error {
 			Logger().Warn().Err(err).Msg("Error shutting down tracer")
 			// Don't return error, continue cleanup
 		}
+
+		// Generate manifest file for trace viewer (agk trace commands)
+		if a.runDir != "" {
+			if err := a.generateManifest(); err != nil {
+				Logger().Warn().Err(err).Msg("Error generating trace manifest")
+			}
+		}
 	}
 
 	// Close memory provider if present
@@ -1244,6 +1259,106 @@ func (a *realAgent) Cleanup(ctx context.Context) error {
 
 	Logger().Info().Str("agent", a.config.Name).Msg("Agent cleanup completed")
 	return nil
+}
+
+// generateManifest creates a manifest.json file for the trace viewer
+func (a *realAgent) generateManifest() error {
+	if a.runDir == "" || a.runID == "" {
+		return nil // Tracing not enabled, skip manifest generation
+	}
+
+	tracePath := filepath.Join(a.runDir, "trace.jsonl")
+
+	// Check if trace file exists
+	if _, err := os.Stat(tracePath); err != nil {
+		return nil // No trace file, skip manifest generation
+	}
+
+	// Read trace file and calculate statistics
+	data, err := ioutil.ReadFile(tracePath)
+	if err != nil {
+		return nil // Can't read trace, skip silently
+	}
+
+	type TraceRun struct {
+		RunID         string    `json:"run_id"`
+		Command       string    `json:"command"`
+		Status        string    `json:"status"`
+		StartTime     time.Time `json:"start_time"`
+		EndTime       time.Time `json:"end_time"`
+		Duration      float64   `json:"duration_seconds"`
+		SpanCount     int       `json:"span_count"`
+		LLMCalls      int       `json:"llm_calls"`
+		TotalTokens   int       `json:"total_tokens"`
+		EstimatedCost float64   `json:"estimated_cost"`
+	}
+
+	var manifest TraceRun
+	manifest.RunID = a.runID
+	manifest.Command = a.config.Name
+	manifest.Status = "completed"
+
+	// Parse trace data to extract metrics
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var firstTime, lastTime time.Time
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var span map[string]interface{}
+		if err := json.Unmarshal(line, &span); err != nil {
+			continue
+		}
+
+		manifest.SpanCount++
+
+		// Check if this is an LLM span
+		if spanName, ok := span["Name"].(string); ok {
+			if strings.Contains(spanName, "llm") {
+				manifest.LLMCalls++
+			}
+		}
+
+		// Extract timestamps
+		if st, ok := span["StartTime"].(string); ok {
+			if t, err := time.Parse(time.RFC3339, st); err == nil {
+				if firstTime.IsZero() || t.Before(firstTime) {
+					firstTime = t
+				}
+			}
+		}
+
+		if et, ok := span["EndTime"].(string); ok {
+			if t, err := time.Parse(time.RFC3339, et); err == nil {
+				if t.After(lastTime) {
+					lastTime = t
+				}
+			}
+		}
+	}
+
+	// Set times
+	if !firstTime.IsZero() {
+		manifest.StartTime = firstTime
+	}
+	if !lastTime.IsZero() {
+		manifest.EndTime = lastTime
+	} else if !firstTime.IsZero() {
+		manifest.EndTime = firstTime
+	}
+
+	// Calculate duration
+	if !manifest.StartTime.IsZero() && !manifest.EndTime.IsZero() {
+		manifest.Duration = manifest.EndTime.Sub(manifest.StartTime).Seconds()
+	}
+
+	// Write manifest.json
+	manifestPath := filepath.Join(a.runDir, "manifest.json")
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil // Can't marshal, skip silently
+	}
+
+	return ioutil.WriteFile(manifestPath, manifestData, 0644)
 }
 
 // =============================================================================

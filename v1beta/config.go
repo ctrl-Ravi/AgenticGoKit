@@ -45,9 +45,15 @@ type LLMConfig struct {
 	APIKey      string  `toml:"api_key,omitempty"`   // API key (prefer env vars)
 	SiteURL     string  `toml:"site_url,omitempty"`  // OpenRouter: Site URL for rankings
 	SiteName    string  `toml:"site_name,omitempty"` // OpenRouter: Site name for analytics
+	// Azure specific fields
+	Endpoint            string `toml:"endpoint,omitempty"`
+	ChatDeployment      string `toml:"chat_deployment,omitempty"`
+	EmbeddingDeployment string `toml:"embedding_deployment,omitempty"`
+	APIVersion          string `toml:"api_version,omitempty"`
 	// New fields for multimodal support
 	Modalities  []string `toml:"modalities,omitempty"`   // Supported modalities (text, image, audio, video)
 	OutputTypes []string `toml:"output_types,omitempty"` // Desired output types
+
 }
 
 // MemoryConfig contains memory and RAG configuration
@@ -416,6 +422,12 @@ func (cr *ConfigResolver) ResolveConfig() *Config {
 	resolvedConfig.LLM.BaseURL = cr.resolveString(resolvedConfig.LLM.BaseURL)
 	resolvedConfig.LLM.APIKey = cr.resolveString(resolvedConfig.LLM.APIKey)
 
+	// For Azure specific fields
+	resolvedConfig.LLM.Endpoint = cr.resolveString(resolvedConfig.LLM.Endpoint)
+	resolvedConfig.LLM.ChatDeployment = cr.resolveString(resolvedConfig.LLM.ChatDeployment)
+	resolvedConfig.LLM.EmbeddingDeployment = cr.resolveString(resolvedConfig.LLM.EmbeddingDeployment)
+	resolvedConfig.LLM.APIVersion = cr.resolveString(resolvedConfig.LLM.APIVersion)
+
 	// Resolve memory configuration if present
 	if resolvedConfig.Memory != nil {
 		resolvedConfig.Memory.Provider = cr.resolveString(resolvedConfig.Memory.Provider)
@@ -454,6 +466,12 @@ func (pcr *ProjectConfigResolver) ResolveConfig() *ProjectConfig {
 	resolvedConfig.LLM.BaseURL = pcr.resolveString(resolvedConfig.LLM.BaseURL)
 	resolvedConfig.LLM.APIKey = pcr.resolveString(resolvedConfig.LLM.APIKey)
 
+	// For Azure specific fields
+	resolvedConfig.LLM.Endpoint = pcr.resolveString(resolvedConfig.LLM.Endpoint)
+	resolvedConfig.LLM.ChatDeployment = pcr.resolveString(resolvedConfig.LLM.ChatDeployment)
+	resolvedConfig.LLM.EmbeddingDeployment = pcr.resolveString(resolvedConfig.LLM.EmbeddingDeployment)
+	resolvedConfig.LLM.APIVersion = pcr.resolveString(resolvedConfig.LLM.APIVersion)
+
 	// Resolve global memory configuration
 	resolvedConfig.Memory.Provider = pcr.resolveString(resolvedConfig.Memory.Provider)
 	resolvedConfig.Memory.Connection = pcr.resolveString(resolvedConfig.Memory.Connection)
@@ -470,6 +488,11 @@ func (pcr *ProjectConfigResolver) ResolveConfig() *ProjectConfig {
 		agent.LLM.Model = pcr.resolveString(agent.LLM.Model)
 		agent.LLM.BaseURL = pcr.resolveString(agent.LLM.BaseURL)
 		agent.LLM.APIKey = pcr.resolveString(agent.LLM.APIKey)
+		// Azure specific fields
+		agent.LLM.Endpoint = pcr.resolveString(agent.LLM.Endpoint)
+		agent.LLM.ChatDeployment = pcr.resolveString(agent.LLM.ChatDeployment)
+		agent.LLM.EmbeddingDeployment = pcr.resolveString(agent.LLM.EmbeddingDeployment)
+		agent.LLM.APIVersion = pcr.resolveString(agent.LLM.APIVersion)
 
 		// Resolve agent-specific memory config if present
 		if agent.Memory != nil {
@@ -980,6 +1003,20 @@ func MergeConfigs(configs ...*Config) *Config {
 		}
 		if config.LLM.MaxTokens != 0 {
 			result.LLM.MaxTokens = config.LLM.MaxTokens
+		}
+
+		// For Azure specific fields
+		if config.LLM.Endpoint != "" {
+			result.LLM.Endpoint = config.LLM.Endpoint
+		}
+		if config.LLM.ChatDeployment != "" {
+			result.LLM.ChatDeployment = config.LLM.ChatDeployment
+		}
+		if config.LLM.EmbeddingDeployment != "" {
+			result.LLM.EmbeddingDeployment = config.LLM.EmbeddingDeployment
+		}
+		if config.LLM.APIVersion != "" {
+			result.LLM.APIVersion = config.LLM.APIVersion
 		}
 
 		// Replace feature configs if present

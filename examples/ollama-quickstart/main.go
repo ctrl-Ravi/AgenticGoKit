@@ -6,14 +6,14 @@ import (
 	"log"
 	"time"
 
-	vnext "github.com/agenticgokit/agenticgokit/v1beta"
 	_ "github.com/agenticgokit/agenticgokit/plugins/llm/ollama"
+	vnext "github.com/agenticgokit/agenticgokit/v1beta"
 )
 
 func main() {
 	fmt.Println("===========================================")
 	fmt.Println("  Ollama QuickStart Agent - vNext API")
-	fmt.Println("===========================================\n")
+	fmt.Println("===========================================")
 
 	// Initialize vNext with defaults (optional but recommended)
 	if err := vnext.InitializeDefaults(); err != nil {
@@ -27,15 +27,17 @@ func main() {
 		Timeout:      30 * time.Second,
 		LLM: vnext.LLMConfig{
 			Provider:    "ollama",
-			Model:       "gpt-oss:20b-cloud",
+			Model:       "llama3.2:1b",
 			Temperature: 0.3,
 			MaxTokens:   200,
 			BaseURL:     "http://localhost:11434",
 		},
 	}
 
-	// Create agent using QuickStart API
-	agent, err := vnext.QuickChatAgentWithConfig("llama3.2", config)
+	// Create agent using v1beta builder API
+	agent, err := vnext.NewBuilder(config.Name).
+		WithConfig(config).
+		Build()
 	if err != nil {
 		log.Fatalf("Failed to create agent: %v", err)
 	}
